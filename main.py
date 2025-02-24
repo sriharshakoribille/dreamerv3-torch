@@ -98,8 +98,11 @@ def main(config):
     tools.set_seed_everywhere(config.seed)
     if config.deterministic_run:
         tools.enable_deterministic_run()
-    current_time = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-    logdir = pathlib.Path(config.logdir).expanduser() / f"{config.task}/{current_time}_{config.custom_msg}"
+    if config.logdir=='':
+        current_time = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+        logdir = pathlib.Path('./logdir').expanduser() / f"{config.task}/{current_time}_{config.custom_msg}"
+    else:
+        logdir = pathlib.Path(config.logdir).expanduser()
     config.traindir = config.traindir or logdir / "train_eps"
     config.evaldir = config.evaldir or logdir / "eval_eps"
     config.steps //= config.action_repeat

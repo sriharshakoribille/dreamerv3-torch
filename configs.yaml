@@ -1,6 +1,7 @@
 defaults:
 
-  logdir: null
+  custom_msg: ''
+  logdir: './logdir'
   traindir: null
   evaldir: null
   offline_traindir: ''

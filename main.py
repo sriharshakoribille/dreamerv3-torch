@@ -3,6 +3,7 @@ import functools
 import os
 import pathlib
 import sys
+from datetime import datetime
 
 os.environ["MUJOCO_GL"] = "osmesa"
 
@@ -97,7 +98,8 @@ def main(config):
     tools.set_seed_everywhere(config.seed)
     if config.deterministic_run:
         tools.enable_deterministic_run()
-    logdir = pathlib.Path(config.logdir).expanduser()
+    current_time = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    logdir = pathlib.Path(config.logdir).expanduser() / f"{config.task}/{current_time}_{config.custom_msg}"
     config.traindir = config.traindir or logdir / "train_eps"
     config.evaldir = config.evaldir or logdir / "eval_eps"
     config.steps //= config.action_repeat

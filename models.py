@@ -84,6 +84,18 @@ class WorldModel(nn.Module):
             device=config.device,
             name="Cont",
         )
+        # self.heads["classifier"] = networks.MLP(
+        #     2*feat_size - config.dyn_deter + config.num_actions,
+        #     (2,),
+        #     config.classifier["layers"],
+        #     config.units,
+        #     config.act,
+        #     config.norm,
+        #     dist="onehot",
+        #     outscale=config.classifier["outscale"],
+        #     device=config.device,
+        #     name="Classifier",
+        # )
         for name in config.grad_heads:
             assert name in self.heads, name
         self._model_opt = tools.Optimizer(

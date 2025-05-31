@@ -67,7 +67,8 @@ class Dreamer(nn.Module):
         policy_output, state = self._policy(obs, state, training)
 
         if training:
-            self._step += len(reset)
+            self._step += len(reset)    # These are agent steps
+            # While the logger steps are environment steps
             self._logger.step = self._config.action_repeat * self._step
         return policy_output, state
 

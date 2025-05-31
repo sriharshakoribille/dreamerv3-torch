@@ -19,6 +19,7 @@ defaults:
   precision: 32
   debug: False
   video_pred_log: True
+  v1: False
 
   # Environment
   task: 'dmc_walker_walk'
@@ -183,3 +184,31 @@ debug:
   prefill: 1
   batch_size: 10
   batch_length: 20
+
+debug_v1:
+  v1: True
+  debug: True
+  # dyn_discrete: 0
+  pretrain: 10
+  prefill: 100
+  batch_size: 10
+  batch_length: 20
+  dyn_scale: 1
+  reward_EMA: False
+  critic: {dist: 'normal'}
+  reward_head: {dist: 'normal'}
+  grad_heads: ['decoder', 'reward']
+  eval_episode_num: 2
+
+dr_v1:
+  v1: True
+  batch_size: 25
+  batch_length: 50
+  dyn_scale: 1
+  envs: 1
+  steps: 5e5
+  reward_EMA: False
+  critic: {dist: 'normal'}
+  reward_head: {dist: 'normal'}
+  grad_heads: ['decoder', 'reward']
+  eval_episode_num: 2

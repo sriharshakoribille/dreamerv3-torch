@@ -52,10 +52,7 @@ class WorldModel(nn.Module):
             config.device,
         )
         self.heads = nn.ModuleDict()
-        if config.dyn_discrete:
-            feat_size = config.dyn_stoch * config.dyn_discrete + config.dyn_deter
-        else:
-            feat_size = config.dyn_stoch + config.dyn_deter
+        feat_size = config.dyn_stoch + config.dyn_deter
         self.heads["decoder"] = networks.MultiDecoder(
             feat_size, shapes, **config.decoder
         )
@@ -131,9 +128,8 @@ class WorldModel(nn.Module):
                 )
                 kl_free = self._config.kl_free
                 dyn_scale = self._config.dyn_scale
-                rep_scale = self._config.rep_scale
-                kl_loss, kl_value, dyn_loss, rep_loss = self.dynamics.kl_loss(
-                    post, prior, kl_free, dyn_scale, rep_scale
+                kl_loss, dyn_loss = self.dynamics.kl_loss(
+                    post, prior, kl_free, dyn_scale
                 )
                 assert kl_loss.shape == embed.shape[:2], kl_loss.shape
                 preds = {}
@@ -161,10 +157,7 @@ class WorldModel(nn.Module):
         metrics.update({f"{name}_loss": to_np(loss) for name, loss in losses.items()})
         metrics["kl_free"] = kl_free
         metrics["dyn_scale"] = dyn_scale
-        metrics["rep_scale"] = rep_scale
         metrics["dyn_loss"] = to_np(dyn_loss)
-        metrics["rep_loss"] = to_np(rep_loss)
-        metrics["kl"] = to_np(torch.mean(kl_value))
         with torch.amp.autocast('cuda', enabled=self._use_amp):
             metrics["prior_ent"] = to_np(
                 torch.mean(self.dynamics.get_dist(prior).entropy())
@@ -175,7 +168,7 @@ class WorldModel(nn.Module):
             context = dict(
                 embed=embed,
                 feat=self.dynamics.get_feat(post),
-                kl=kl_value,
+                # kl=kl_value,
                 postent=self.dynamics.get_dist(post).entropy(),
             )
         post = {k: v.detach() for k, v in post.items()}
@@ -229,10 +222,7 @@ class ImagBehavior(nn.Module):
         self._use_amp = True if config.precision == 16 else False
         self._config = config
         self._world_model = world_model
-        if config.dyn_discrete:
-            feat_size = config.dyn_stoch * config.dyn_discrete + config.dyn_deter
-        else:
-            feat_size = config.dyn_stoch + config.dyn_deter
+        feat_size = config.dyn_stoch + config.dyn_deter
         self.actor = networks.MLP(
             feat_size,
             (config.num_actions,),
@@ -309,8 +299,8 @@ class ImagBehavior(nn.Module):
                     start, self.actor, self._config.imag_horizon
                 )
                 reward = objective(imag_feat, imag_state, imag_action)
-                actor_ent = self.actor(imag_feat).entropy()
-                state_ent = self._world_model.dynamics.get_dist(imag_state).entropy()
+                # actor_ent = self.actor(imag_feat).entropy()
+                # state_ent = self._world_model.dynamics.get_dist(imag_state).entropy()
                 # this target is not scaled by ema or sym_log.
                 target, weights, base = self._compute_target(
                     imag_feat, imag_state, reward
@@ -322,7 +312,7 @@ class ImagBehavior(nn.Module):
                     weights,
                     base,
                 )
-                actor_loss -= self._config.actor["entropy"] * actor_ent[:-1, ..., None]
+                # actor_loss -= self._config.actor["entropy"] * actor_ent[:-1, ..., None]
                 actor_loss = torch.mean(actor_loss)
                 metrics.update(mets)
                 value_input = imag_feat
@@ -333,8 +323,8 @@ class ImagBehavior(nn.Module):
                 target = torch.stack(target, dim=1)
                 # (time, batch, 1), (time, batch, 1) -> (time, batch)
                 value_loss = -value.log_prob(target.detach())
-                slow_target = self._slow_value(value_input[:-1].detach())
                 if self._config.critic["slow_target"]:
+                    slow_target = self._slow_value(value_input[:-1].detach())
                     value_loss -= value.log_prob(slow_target.mode().detach())
                 # (time, batch, 1), (time, batch, 1) -> (1,)
                 value_loss = torch.mean(weights[:-1] * value_loss[:, :, None])
@@ -350,7 +340,7 @@ class ImagBehavior(nn.Module):
             )
         else:
             metrics.update(tools.tensorstats(imag_action, "imag_action"))
-        metrics["actor_entropy"] = to_np(torch.mean(actor_ent))
+        # metrics["actor_entropy"] = to_np(torch.mean(actor_ent))
         with tools.RequiresGrad(self):
             metrics.update(self._actor_opt(actor_loss, self.actor.parameters()))
             metrics.update(self._value_opt(value_loss, self.value.parameters()))
@@ -405,36 +395,38 @@ class ImagBehavior(nn.Module):
         base,
     ):
         metrics = {}
-        inp = imag_feat.detach()
-        policy = self.actor(inp)
+        # inp = imag_feat.detach()
+        # policy = self.actor(inp)
         # Q-val for actor is not transformed using symlog
         target = torch.stack(target, dim=1)
-        if self._config.reward_EMA:
-            offset, scale = self.reward_ema(target, self.ema_vals)
-            normed_target = (target - offset) / scale
-            normed_base = (base - offset) / scale
-            adv = normed_target - normed_base
-            metrics.update(tools.tensorstats(normed_target, "normed_target"))
-            metrics["EMA_005"] = to_np(self.ema_vals[0])
-            metrics["EMA_095"] = to_np(self.ema_vals[1])
 
-        if self._config.imag_gradient == "dynamics":
-            actor_target = adv
-        elif self._config.imag_gradient == "reinforce":
-            actor_target = (
-                policy.log_prob(imag_action)[:-1][:, :, None]
-                * (target - self.value(imag_feat[:-1]).mode()).detach()
-            )
-        elif self._config.imag_gradient == "both":
-            actor_target = (
-                policy.log_prob(imag_action)[:-1][:, :, None]
-                * (target - self.value(imag_feat[:-1]).mode()).detach()
-            )
-            mix = self._config.imag_gradient_mix
-            actor_target = mix * target + (1 - mix) * actor_target
-            metrics["imag_gradient_mix"] = mix
-        else:
-            raise NotImplementedError(self._config.imag_gradient)
+        actor_target = target
+        # if self._config.reward_EMA:
+        #     offset, scale = self.reward_ema(target, self.ema_vals)
+        #     normed_target = (target - offset) / scale
+        #     normed_base = (base - offset) / scale
+        #     adv = normed_target - normed_base
+        #     metrics.update(tools.tensorstats(normed_target, "normed_target"))
+        #     metrics["EMA_005"] = to_np(self.ema_vals[0])
+        #     metrics["EMA_095"] = to_np(self.ema_vals[1])
+
+        # if self._config.imag_gradient == "dynamics":
+        #     actor_target = adv
+        # elif self._config.imag_gradient == "reinforce":
+        #     actor_target = (
+        #         policy.log_prob(imag_action)[:-1][:, :, None]
+        #         * (target - self.value(imag_feat[:-1]).mode()).detach()
+        #     )
+        # elif self._config.imag_gradient == "both":
+        #     actor_target = (
+        #         policy.log_prob(imag_action)[:-1][:, :, None]
+        #         * (target - self.value(imag_feat[:-1]).mode()).detach()
+        #     )
+        #     mix = self._config.imag_gradient_mix
+        #     actor_target = mix * target + (1 - mix) * actor_target
+        #     metrics["imag_gradient_mix"] = mix
+        # else:
+        #     raise NotImplementedError(self._config.imag_gradient)
         actor_loss = -weights[:-1] * actor_target
         return actor_loss, metrics
 

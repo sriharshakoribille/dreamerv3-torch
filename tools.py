@@ -587,6 +587,9 @@ class ContDist:
         return out
 
     def log_prob(self, x):
+        if self.mean.shape != x.shape:
+            # raise ValueError(f"Shape mismatch: {self.mean.shape} vs {x.shape}")
+            x=torch.unsqueeze(x, -1)
         return self._dist.log_prob(x)
 
 

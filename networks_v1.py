@@ -17,7 +17,6 @@ class RSSM(nn.Module):
         deter=200,
         hidden=200,
         rec_depth=1,
-        discrete=False,
         act="SiLU",
         norm=True,
         mean_act="none",
@@ -223,25 +222,21 @@ class RSSM(nn.Module):
         std = std + self._min_std
         return {"mean": mean, "std": std}
 
-    def kl_loss(self, post, prior, free, dyn_scale, rep_scale):
+    def kl_loss(self, post, prior, free, dyn_scale):
         kld = torchd.kl.kl_divergence
         dist = lambda x: self.get_dist(x)
         sg = lambda x: {k: v.detach() for k, v in x.items()}
 
-        rep_loss = value = kld(
-            dist(post)._dist,
-            dist(sg(prior))._dist,
-        )
         dyn_loss = kld(
-            dist(sg(post))._dist,
+            dist(post)._dist,
             dist(prior)._dist,
         )
         # this is implemented using maximum at the original repo as the gradients are not backpropagated for the out of limits.
-        rep_loss = torch.clip(rep_loss, min=free)
+        # rep_loss = torch.clip(rep_loss, min=free)
         dyn_loss = torch.clip(dyn_loss, min=free)
-        loss = dyn_scale * dyn_loss + rep_scale * rep_loss
+        loss = dyn_scale * dyn_loss
 
-        return loss, value, dyn_loss, rep_loss
+        return loss, dyn_loss
 
 
 class MultiEncoder(nn.Module):

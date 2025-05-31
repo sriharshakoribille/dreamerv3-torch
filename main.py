@@ -16,6 +16,7 @@ import exploration as expl
 import models
 import tools
 from dreamer import Dreamer, to_np
+from dreamer_v1 import DreamerV1
 import envs.wrappers as wrappers
 from parallel import Parallel, Damy
 
@@ -179,13 +180,25 @@ def main(config):
     print("Simulate agent.")
     train_dataset = make_dataset(train_eps, config)
     eval_dataset = make_dataset(eval_eps, config)
-    agent = Dreamer(
-        train_envs[0].observation_space,
-        train_envs[0].action_space,
-        config,
-        logger,
-        train_dataset,
-    ).to(config.device)
+    
+    if config.v1:
+        print("Using DreamerV1.")
+        agent = DreamerV1(
+            train_envs[0].observation_space,
+            train_envs[0].action_space,
+            config,
+            logger,
+            train_dataset,
+        ).to(config.device)
+    else:
+        print("Using DreamerV3.")
+        agent = Dreamer(
+            train_envs[0].observation_space,
+            train_envs[0].action_space,
+            config,
+            logger,
+            train_dataset,
+        ).to(config.device)
     agent.requires_grad_(requires_grad=False)
     if (logdir / "latest.pt").exists():
         checkpoint = torch.load(logdir / "latest.pt")

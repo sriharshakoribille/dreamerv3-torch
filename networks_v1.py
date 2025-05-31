@@ -35,7 +35,6 @@ class RSSM(nn.Module):
         self._hidden = hidden
         self._min_std = min_std
         self._rec_depth = rec_depth
-        self._discrete = discrete
         act = getattr(torch.nn, act)
         self._mean_act = mean_act
         self._std_act = std_act
@@ -46,12 +45,9 @@ class RSSM(nn.Module):
         self._device = device
 
         inp_layers = []
-        if self._discrete:
-            inp_dim = self._stoch * self._discrete + num_actions
-        else:
-            inp_dim = self._stoch + num_actions
+        inp_dim = self._stoch + num_actions
         inp_layers.append(nn.Linear(inp_dim, self._hidden, bias=False))
-        if norm:
+        if norm:    # TODO: check if norm is needed
             inp_layers.append(nn.LayerNorm(self._hidden, eps=1e-03))
         inp_layers.append(act())
         self._img_in_layers = nn.Sequential(*inp_layers)
@@ -62,7 +58,7 @@ class RSSM(nn.Module):
         img_out_layers = []
         inp_dim = self._deter
         img_out_layers.append(nn.Linear(inp_dim, self._hidden, bias=False))
-        if norm:
+        if norm:    # TODO: check if norm is needed
             img_out_layers.append(nn.LayerNorm(self._hidden, eps=1e-03))
         img_out_layers.append(act())
         self._img_out_layers = nn.Sequential(*img_out_layers)
@@ -71,24 +67,16 @@ class RSSM(nn.Module):
         obs_out_layers = []
         inp_dim = self._deter + self._embed
         obs_out_layers.append(nn.Linear(inp_dim, self._hidden, bias=False))
-        if norm:
+        if norm:    # TODO: check if norm is needed
             obs_out_layers.append(nn.LayerNorm(self._hidden, eps=1e-03))
         obs_out_layers.append(act())
         self._obs_out_layers = nn.Sequential(*obs_out_layers)
         self._obs_out_layers.apply(tools.weight_init)
 
-        if self._discrete:
-            self._imgs_stat_layer = nn.Linear(
-                self._hidden, self._stoch * self._discrete
-            )
-            self._imgs_stat_layer.apply(tools.uniform_weight_init(1.0))
-            self._obs_stat_layer = nn.Linear(self._hidden, self._stoch * self._discrete)
-            self._obs_stat_layer.apply(tools.uniform_weight_init(1.0))
-        else:
-            self._imgs_stat_layer = nn.Linear(self._hidden, 2 * self._stoch)
-            self._imgs_stat_layer.apply(tools.uniform_weight_init(1.0))
-            self._obs_stat_layer = nn.Linear(self._hidden, 2 * self._stoch)
-            self._obs_stat_layer.apply(tools.uniform_weight_init(1.0))
+        self._imgs_stat_layer = nn.Linear(self._hidden, 2 * self._stoch)
+        self._imgs_stat_layer.apply(tools.uniform_weight_init(1.0))
+        self._obs_stat_layer = nn.Linear(self._hidden, 2 * self._stoch)
+        self._obs_stat_layer.apply(tools.uniform_weight_init(1.0))
 
         if self._initial == "learned":
             self.W = torch.nn.Parameter(
@@ -98,23 +86,12 @@ class RSSM(nn.Module):
 
     def initial(self, batch_size):
         deter = torch.zeros(batch_size, self._deter, device=self._device)
-        if self._discrete:
-            state = dict(
-                logit=torch.zeros(
-                    [batch_size, self._stoch, self._discrete], device=self._device
-                ),
-                stoch=torch.zeros(
-                    [batch_size, self._stoch, self._discrete], device=self._device
-                ),
-                deter=deter,
-            )
-        else:
-            state = dict(
-                mean=torch.zeros([batch_size, self._stoch], device=self._device),
-                std=torch.zeros([batch_size, self._stoch], device=self._device),
-                stoch=torch.zeros([batch_size, self._stoch], device=self._device),
-                deter=deter,
-            )
+        state = dict(
+            mean=torch.zeros([batch_size, self._stoch], device=self._device),
+            std=torch.zeros([batch_size, self._stoch], device=self._device),
+            stoch=torch.zeros([batch_size, self._stoch], device=self._device),
+            deter=deter,
+        )
         if self._initial == "zeros":
             return state
         elif self._initial == "learned":
@@ -153,22 +130,13 @@ class RSSM(nn.Module):
 
     def get_feat(self, state):
         stoch = state["stoch"]
-        if self._discrete:
-            shape = list(stoch.shape[:-2]) + [self._stoch * self._discrete]
-            stoch = stoch.reshape(shape)
         return torch.cat([stoch, state["deter"]], -1)
 
     def get_dist(self, state, dtype=None):
-        if self._discrete:
-            logit = state["logit"]
-            dist = torchd.independent.Independent(
-                tools.OneHotDist(logit, unimix_ratio=self._unimix_ratio), 1
-            )
-        else:
-            mean, std = state["mean"], state["std"]
-            dist = tools.ContDist(
-                torchd.independent.Independent(torchd.normal.Normal(mean, std), 1)
-            )
+        mean, std = state["mean"], state["std"]
+        dist = tools.ContDist(
+            torchd.independent.Independent(torchd.normal.Normal(mean, std), 1)
+        )
         return dist
 
     def obs_step(self, prev_state, prev_action, embed, is_first, sample=True):
@@ -208,10 +176,6 @@ class RSSM(nn.Module):
     def img_step(self, prev_state, prev_action, sample=True):
         # (batch, stoch, discrete_num)
         prev_stoch = prev_state["stoch"]
-        if self._discrete:
-            shape = list(prev_stoch.shape[:-2]) + [self._stoch * self._discrete]
-            # (batch, stoch, discrete_num) -> (batch, stoch * discrete_num)
-            prev_stoch = prev_stoch.reshape(shape)
         # (batch, stoch * discrete_num) -> (batch, stoch * discrete_num + action)
         x = torch.cat([prev_stoch, prev_action], -1)
         # (batch, stoch * discrete_num + action, embed) -> (batch, hidden)
@@ -239,35 +203,25 @@ class RSSM(nn.Module):
         return dist.mode()
 
     def _suff_stats_layer(self, name, x):
-        if self._discrete:
-            if name == "ims":
-                x = self._imgs_stat_layer(x)
-            elif name == "obs":
-                x = self._obs_stat_layer(x)
-            else:
-                raise NotImplementedError
-            logit = x.reshape(list(x.shape[:-1]) + [self._stoch, self._discrete])
-            return {"logit": logit}
+        if name == "ims":
+            x = self._imgs_stat_layer(x)
+        elif name == "obs":
+            x = self._obs_stat_layer(x)
         else:
-            if name == "ims":
-                x = self._imgs_stat_layer(x)
-            elif name == "obs":
-                x = self._obs_stat_layer(x)
-            else:
-                raise NotImplementedError
-            mean, std = torch.split(x, [self._stoch] * 2, -1)
-            mean = {
-                "none": lambda: mean,
-                "tanh5": lambda: 5.0 * torch.tanh(mean / 5.0),
-            }[self._mean_act]()
-            std = {
-                "softplus": lambda: torch.softplus(std),
-                "abs": lambda: torch.abs(std + 1),
-                "sigmoid": lambda: torch.sigmoid(std),
-                "sigmoid2": lambda: 2 * torch.sigmoid(std / 2),
-            }[self._std_act]()
-            std = std + self._min_std
-            return {"mean": mean, "std": std}
+            raise NotImplementedError
+        mean, std = torch.split(x, [self._stoch] * 2, -1)
+        mean = {
+            "none": lambda: mean,
+            "tanh5": lambda: 5.0 * torch.tanh(mean / 5.0),
+        }[self._mean_act]()
+        std = {
+            "softplus": lambda: torch.softplus(std),
+            "abs": lambda: torch.abs(std + 1),
+            "sigmoid": lambda: torch.sigmoid(std),
+            "sigmoid2": lambda: 2 * torch.sigmoid(std / 2),
+        }[self._std_act]()
+        std = std + self._min_std
+        return {"mean": mean, "std": std}
 
     def kl_loss(self, post, prior, free, dyn_scale, rep_scale):
         kld = torchd.kl.kl_divergence
@@ -275,12 +229,12 @@ class RSSM(nn.Module):
         sg = lambda x: {k: v.detach() for k, v in x.items()}
 
         rep_loss = value = kld(
-            dist(post) if self._discrete else dist(post)._dist,
-            dist(sg(prior)) if self._discrete else dist(sg(prior))._dist,
+            dist(post)._dist,
+            dist(sg(prior))._dist,
         )
         dyn_loss = kld(
-            dist(sg(post)) if self._discrete else dist(sg(post))._dist,
-            dist(prior) if self._discrete else dist(prior)._dist,
+            dist(sg(post))._dist,
+            dist(prior)._dist,
         )
         # this is implemented using maximum at the original repo as the gradients are not backpropagated for the out of limits.
         rep_loss = torch.clip(rep_loss, min=free)

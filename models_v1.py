@@ -40,7 +40,6 @@ class WorldModel(nn.Module):
             config.dyn_deter,
             config.dyn_hidden,
             config.dyn_rec_depth,
-            config.dyn_discrete,
             config.act,
             config.norm,
             config.dyn_mean_act,
@@ -72,18 +71,18 @@ class WorldModel(nn.Module):
             device=config.device,
             name="Reward",
         )
-        self.heads["cont"] = networks.MLP(
-            feat_size,
-            (),
-            config.cont_head["layers"],
-            config.units,
-            config.act,
-            config.norm,
-            dist="binary",
-            outscale=config.cont_head["outscale"],
-            device=config.device,
-            name="Cont",
-        )
+        # self.heads["cont"] = networks.MLP(
+        #     feat_size,
+        #     (),
+        #     config.cont_head["layers"],
+        #     config.units,
+        #     config.act,
+        #     config.norm,
+        #     dist="binary",
+        #     outscale=config.cont_head["outscale"],
+        #     device=config.device,
+        #     name="Cont",
+        # )
         # self.heads["classifier"] = networks.MLP(
         #     2*feat_size - config.dyn_deter + config.num_actions,
         #     (2,),
@@ -114,7 +113,7 @@ class WorldModel(nn.Module):
         # other losses are scaled by 1.0.
         self._scales = dict(
             reward=config.reward_head["loss_scale"],
-            cont=config.cont_head["loss_scale"],
+            # cont=config.cont_head["loss_scale"],
         )
 
     def _train(self, data):

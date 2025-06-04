@@ -103,6 +103,14 @@ def main(config):
         logdir = pathlib.Path('./logdir').expanduser() / f"{config.task}/{current_time}_{config.custom_msg}"
     else:
         logdir = pathlib.Path(config.logdir).expanduser()
+    
+    import ruamel.yaml
+    yml = ruamel.yaml.YAML()
+    # Convert config Namespace to dict for YAML
+    config_dict = vars(config)
+    with open(str(logdir / "final_config.yaml"), "w") as f:
+        yml.dump(config_dict, f)
+        
     config.traindir = config.traindir or logdir / "train_eps"
     config.evaldir = config.evaldir or logdir / "eval_eps"
     config.steps //= config.action_repeat

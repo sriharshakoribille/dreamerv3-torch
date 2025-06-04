@@ -808,3 +808,25 @@ class ImgChLayerNorm(nn.Module):
         x = self.norm(x)
         x = x.permute(0, 3, 1, 2)
         return x
+
+class Discriminator(nn.Module):
+    def __init__(self, latent_dims, action_dims):
+        super().__init__()
+        hidden_dims = 512   # Manually taken from alm
+        # det_dims = config.parameters.dreamer.deterministic_size
+        self.classifier = nn.Sequential(
+            nn.Linear(2 * latent_dims + action_dims, hidden_dims), nn.LayerNorm(hidden_dims, eps=1e-03), 
+            nn.Tanh(), nn.Linear(hidden_dims, hidden_dims), nn.LayerNorm(hidden_dims, eps=1e-03),
+            nn.ELU(), nn.Linear(hidden_dims, 2))
+        self.apply(tools.weight_init)
+
+    def forward(self, z, a, z_next):
+        x = torch.cat([z, a, z_next], -1)
+        logits = self.classifier(x)
+        return logits
+    
+    def get_reward(self, z, a, z_next):
+        x = torch.cat([z, a, z_next], -1)
+        logits = self.classifier(x)
+        reward = torch.sub(logits[..., 1], logits[..., 0])
+        return reward.unsqueeze(-1)

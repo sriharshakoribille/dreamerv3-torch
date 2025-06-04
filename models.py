@@ -4,6 +4,7 @@ from torch import nn
 
 import networks
 import tools
+import numpy as np
 
 to_np = lambda x: x.detach().cpu().numpy()
 
@@ -84,18 +85,23 @@ class WorldModel(nn.Module):
             device=config.device,
             name="Cont",
         )
-        # self.heads["classifier"] = networks.MLP(
-        #     2*feat_size - config.dyn_deter + config.num_actions,
-        #     (2,),
-        #     config.classifier["layers"],
+        # self.cls = networks.MLP(
+        #     2*config.dyn_stoch * config.dyn_discrete,
+        #     (),
+        #     config.cls_head["layers"],
         #     config.units,
         #     config.act,
         #     config.norm,
-        #     dist="onehot",
-        #     outscale=config.classifier["outscale"],
+        #     dist="binary",
+        #     outscale=config.cls_head["outscale"],
         #     device=config.device,
-        #     name="Classifier",
+        #     name="Cls",
         # )
+        if config.cls_coef:
+            self.cls = networks.Discriminator(
+                latent_dims=config.dyn_stoch * config.dyn_discrete,
+                action_dims=config.num_actions
+            )
         for name in config.grad_heads:
             assert name in self.heads, name
         self._model_opt = tools.Optimizer(
@@ -115,6 +121,7 @@ class WorldModel(nn.Module):
         self._scales = dict(
             reward=config.reward_head["loss_scale"],
             cont=config.cont_head["loss_scale"],
+            # cls=config.cls_head["loss_scale"],
         )
 
     def _train(self, data):
@@ -137,6 +144,12 @@ class WorldModel(nn.Module):
                     post, prior, kl_free, dyn_scale, rep_scale
                 )
                 assert kl_loss.shape == embed.shape[:2], kl_loss.shape
+                # classifier loss
+                if self._config.cls_coef:
+                    cls_loss = self._intrinsic_reward_loss(prior, post, data["action"])
+                else:
+                    cls_loss = torch.tensor(0.0, device=self._config.device)
+
                 preds = {}
                 for name, head in self.heads.items():
                     grad_head = name in self._config.grad_heads
@@ -157,7 +170,7 @@ class WorldModel(nn.Module):
                     for key, value in losses.items()
                 }
                 model_loss = sum(scaled.values()) + kl_loss
-            metrics = self._model_opt(torch.mean(model_loss), self.parameters())
+            metrics = self._model_opt(torch.mean(model_loss) + cls_loss, self.parameters())
 
         metrics.update({f"{name}_loss": to_np(loss) for name, loss in losses.items()})
         metrics["kl_free"] = kl_free
@@ -166,6 +179,7 @@ class WorldModel(nn.Module):
         metrics["dyn_loss"] = to_np(dyn_loss)
         metrics["rep_loss"] = to_np(rep_loss)
         metrics["kl"] = to_np(torch.mean(kl_value))
+        metrics["cls_loss"] = to_np(cls_loss)
         with torch.amp.autocast('cuda', enabled=self._use_amp):
             metrics["prior_ent"] = to_np(
                 torch.mean(self.dynamics.get_dist(prior).entropy())
@@ -181,6 +195,29 @@ class WorldModel(nn.Module):
             )
         post = {k: v.detach() for k, v in post.items()}
         return post, context, metrics
+    
+    def _intrinsic_reward_loss(self, priors, posteriors, actions):
+        # z, action_batch, z_next, z_next_prior
+        reshape_batch = lambda x: x.reshape(-1, *x.shape[2:])  # (batch, time, ..) -> (batch*time, ..)
+        reshape_discrete = lambda x: x.reshape(x.shape[0],-1)  # (batch, stoch, discrete_num) -> (batch, stoch*discrete_num)
+
+        action_batch = reshape_batch(actions[:, :-1]).detach()
+        z = reshape_discrete(reshape_batch(posteriors["stoch"][:,:-1])).detach()
+        z_next_prior = reshape_discrete(reshape_batch(priors["stoch"][:,1:])).detach()
+        z_next = reshape_discrete(reshape_batch(posteriors["stoch"][:,1:])).detach()
+
+        ip_batch_shape = z.shape[0]
+        false_batch_idx = np.random.choice(ip_batch_shape, ip_batch_shape//2, replace=False)
+        z_next_target = z_next 
+        z_next_target[false_batch_idx] = z_next_prior[false_batch_idx]
+
+        labels = torch.ones(ip_batch_shape, dtype=torch.long, device=self._config.device)
+        labels[false_batch_idx] = 0.0
+
+        logits = self.cls(z, action_batch, z_next_target)
+        classifier_loss = nn.CrossEntropyLoss()(logits, labels)
+
+        return classifier_loss
 
     # this function is called during both rollout and training
     def preprocess(self, obs):
@@ -295,6 +332,35 @@ class ImagBehavior(nn.Module):
                 "ema_vals", torch.zeros((2,), device=self._config.device)
             )
             self.reward_ema = RewardEMA(device=self._config.device)
+    
+    # def get_decoded_obs_dist(self, imag_feat):
+    #     """Get the distribution of imagined observations."""
+    #     return self._world_model.heads["decoder"](imag_feat)['image']
+
+    # def info_gain(self, imag_feat, imag_state, imag_action):
+    #     """Compute information gain from imagined obs and actions."""
+    #     with torch.no_grad():
+    #         dynamics = self._world_model.dynamics
+    #         imag_feat = imag_feat.detach()
+    #         imag_state_dict = [{}]
+    #         ig_list = []
+    #         # get the distribution of imagined observations
+    #         for t in imag_feat:
+    #             obs_dist = self.get_decoded_obs_dist(t.unsqueeze(0))
+    #             obs = obs_dist.mode()
+    #             embed = self._world_model.encoder({'image': obs})
+    #             x = torch.cat([imag_state['deter'],embed], dim=-1)
+    #             x = dynamics._obs_out_layers(x)
+    #             stats = dynamics._suff_stats_layer("obs", x)
+    #             imag_post_dist = dynamics.get_dist(stats)
+    #             imag_prior_dist = dynamics.get_dist(imag_state)
+    #             # compute the KL divergence between imagined post and prior
+    #             ig_kl = torch.distributions.kl.kl_divergence(imag_prior_dist, 
+    #                                                     imag_post_dist)
+    #             ig_list.append(ig_kl)
+    #         # stack the KL divergences for each time step
+    #         ig_kl = torch.stack(ig_list, dim=0)
+    #     return ig_kl        
 
     def _train(
         self,
@@ -311,10 +377,20 @@ class ImagBehavior(nn.Module):
                 )
                 reward = objective(imag_feat, imag_state, imag_action)
                 actor_ent = self.actor(imag_feat).entropy()
-                state_ent = self._world_model.dynamics.get_dist(imag_state).entropy()
+                # compute information gain
+                if self._config.cls_coef:
+                    stoch = imag_state["stoch"].reshape(*imag_feat.shape[:2],-1)
+                    cls_reward = self._world_model.cls.get_reward(
+                        z = stoch[:-1],
+                        a = imag_action[:-1],
+                        z_next = stoch[1:],
+                    )
+                else:
+                    cls_reward = torch.zeros_like(reward[:, :-1])
+                # state_ent = self._world_model.dynamics.get_dist(imag_state).entropy()
                 # this target is not scaled by ema or sym_log.
                 target, weights, base = self._compute_target(
-                    imag_feat, imag_state, reward
+                    imag_feat, imag_state, reward, cls_reward
                 )
                 actor_loss, mets = self._compute_actor_loss(
                     imag_feat,
@@ -343,6 +419,8 @@ class ImagBehavior(nn.Module):
         metrics.update(tools.tensorstats(value.mode(), "value"))
         metrics.update(tools.tensorstats(target, "target"))
         metrics.update(tools.tensorstats(reward, "imag_reward"))
+        if self._config.cls_coef:
+            metrics.update(tools.tensorstats(cls_reward, "imag_cls_reward"))
         if self._config.actor["dist"] in ["onehot"]:
             metrics.update(
                 tools.tensorstats(
@@ -377,7 +455,7 @@ class ImagBehavior(nn.Module):
 
         return feats, states, actions
 
-    def _compute_target(self, imag_feat, imag_state, reward):
+    def _compute_target(self, imag_feat, imag_state, reward, reward_cls):
         if "cont" in self._world_model.heads:
             inp = self._world_model.dynamics.get_feat(imag_state)
             discount = self._config.discount * self._world_model.heads["cont"](inp).mean
@@ -385,7 +463,7 @@ class ImagBehavior(nn.Module):
             discount = self._config.discount * torch.ones_like(reward)
         value = self.value(imag_feat).mode()
         target = tools.lambda_return(
-            reward[1:],
+            reward[1:] + self._config.cls_coef * reward_cls,
             value[:-1],
             discount[1:],
             bootstrap=value[-1],

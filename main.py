@@ -104,6 +104,7 @@ def main(config):
     else:
         logdir = pathlib.Path(config.logdir).expanduser()
     
+    logdir.mkdir(parents=True, exist_ok=True)
     import ruamel.yaml
     yml = ruamel.yaml.YAML()
     # Convert config Namespace to dict for YAML
@@ -119,7 +120,6 @@ def main(config):
     config.time_limit //= config.action_repeat
 
     print("Logdir", logdir)
-    logdir.mkdir(parents=True, exist_ok=True)
     config.traindir.mkdir(parents=True, exist_ok=True)
     config.evaldir.mkdir(parents=True, exist_ok=True)
     step = count_steps(config.traindir)

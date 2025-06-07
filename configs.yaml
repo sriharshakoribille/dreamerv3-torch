@@ -59,6 +59,7 @@ defaults:
   rep_scale: 0.1
   kl_free: 1.0
   cls_coef: 0.0
+  cls_deter: False
   weight_decay: 0.0
   unimix_ratio: 0.01
   initial: 'learned'

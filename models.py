@@ -98,9 +98,15 @@ class WorldModel(nn.Module):
         #     name="Cls",
         # )
         if config.cls_coef:
+            deter = config.dyn_deter if config.cls_deter else 0
+            if config.cls_deter:
+                print("Cls with deter")
+            else:
+                print("Cls without deter")
             self.cls = networks.Discriminator(
                 latent_dims=config.dyn_stoch * config.dyn_discrete,
-                action_dims=config.num_actions
+                action_dims=config.num_actions,
+                deter_dims=deter
             )
         for name in config.grad_heads:
             assert name in self.heads, name
@@ -197,11 +203,12 @@ class WorldModel(nn.Module):
         return post, context, metrics
     
     def _intrinsic_reward_loss(self, priors, posteriors, actions):
-        # z, action_batch, z_next, z_next_prior
+        # z, h, action_batch, z_next, z_next_prior
         reshape_batch = lambda x: x.reshape(-1, *x.shape[2:])  # (batch, time, ..) -> (batch*time, ..)
         reshape_discrete = lambda x: x.reshape(x.shape[0],-1)  # (batch, stoch, discrete_num) -> (batch, stoch*discrete_num)
 
         action_batch = reshape_batch(actions[:, :-1]).detach()
+        h = reshape_batch(posteriors["deter"][:, :-1]).detach()
         z = reshape_discrete(reshape_batch(posteriors["stoch"][:,:-1])).detach()
         z_next_prior = reshape_discrete(reshape_batch(priors["stoch"][:,1:])).detach()
         z_next = reshape_discrete(reshape_batch(posteriors["stoch"][:,1:])).detach()
@@ -214,7 +221,7 @@ class WorldModel(nn.Module):
         labels = torch.ones(ip_batch_shape, dtype=torch.long, device=self._config.device)
         labels[false_batch_idx] = 0.0
 
-        logits = self.cls(z, action_batch, z_next_target)
+        logits = self.cls(z, h, action_batch, z_next_target)
         classifier_loss = nn.CrossEntropyLoss()(logits, labels)
 
         return classifier_loss
@@ -380,8 +387,10 @@ class ImagBehavior(nn.Module):
                 # compute information gain
                 if self._config.cls_coef:
                     stoch = imag_state["stoch"].reshape(*imag_feat.shape[:2],-1)
+                    deter = imag_state["deter"]
                     cls_reward = self._world_model.cls.get_reward(
                         z = stoch[:-1],
+                        h = deter[:-1],
                         a = imag_action[:-1],
                         z_next = stoch[1:],
                     )

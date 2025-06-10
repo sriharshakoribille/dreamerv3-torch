@@ -136,3 +136,5 @@ dmypy.json
 
 # VScode
 .vscode/*
+
+tmp

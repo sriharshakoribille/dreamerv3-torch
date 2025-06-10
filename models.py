@@ -33,6 +33,7 @@ class WorldModel(nn.Module):
         self._step = step
         self._use_amp = True if config.precision == 16 else False
         self._config = config
+        self.rng = np.random.default_rng(config.seed)
         shapes = {k: tuple(v.shape) for k, v in obs_space.spaces.items()}
         self.encoder = networks.MultiEncoder(shapes, **config.encoder)
         self.embed_size = self.encoder.outdim
@@ -214,7 +215,7 @@ class WorldModel(nn.Module):
         z_next = reshape_discrete(reshape_batch(posteriors["stoch"][:,1:])).detach()
 
         ip_batch_shape = z.shape[0]
-        false_batch_idx = np.random.choice(ip_batch_shape, ip_batch_shape//2, replace=False)
+        false_batch_idx = self.rng.choice(ip_batch_shape, ip_batch_shape//2, replace=False)
         z_next_target = z_next 
         z_next_target[false_batch_idx] = z_next_prior[false_batch_idx]
 

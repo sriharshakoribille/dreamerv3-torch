@@ -100,7 +100,7 @@ def main(config):
         tools.enable_deterministic_run()
     if config.logdir=='':
         current_time = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-        logdir = pathlib.Path('./logdir').expanduser() / f"{config.task}/{current_time}_{config.custom_msg}"
+        logdir = pathlib.Path('./logdir_2').expanduser() / f"{config.task}/{current_time}_{config.custom_msg}"
     else:
         logdir = pathlib.Path(config.logdir).expanduser()
     

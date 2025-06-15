@@ -25,7 +25,7 @@ class GymnasiumEnv(gym.Wrapper):
         img = self.env.render()
         if img is None:
             raise ValueError("Render mode 'rgb_array' is not supported by the environment.")
-        img = cv2.resize(img, self._size)
+        image = cv2.resize(image, self.size, interpolation=cv2.INTER_AREA)
         return img
     
     def reset(self):

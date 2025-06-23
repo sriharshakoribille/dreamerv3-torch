@@ -135,9 +135,14 @@ class rnd(nn.Module):
         return int_reward.detach().cpu().numpy()
 
 class ppo_clip(object):
-    def __init__(self, env, episode, learning_rate, gamma, lam, epsilon, capacity, render, log, update_iterations, int_coef, ext_coef, rnd_update_prop, seed, device):
+    def __init__(self, env, episode, learning_rate, gamma, lam, epsilon, 
+                 capacity, render, log, update_iterations, int_coef, ext_coef, 
+                 rnd_update_prop, seed, device, tb_path='runs_rnd/ppo_clip_rnd', 
+                 eval_env=None, eval_freq=100):
         super(ppo_clip, self).__init__()
         self.env = env
+        self.eval_env = eval_env
+        self.eval_freq = eval_freq
         self.episode = episode
         self.learning_rate = learning_rate
         self.gamma = gamma
@@ -174,7 +179,7 @@ class ppo_clip(object):
         self.count = 0
         self.train_count = 0
         self.weight_reward = None
-        self.writer = SummaryWriter('runs_rnd/ppo_clip_rnd')
+        self.writer = SummaryWriter(tb_path)
 
     def train(self):
         obs, next_obs, act, int_rew, don, _, _, int_adv = self.int_buffer.get()
@@ -239,8 +244,31 @@ class ppo_clip(object):
             self.writer.add_scalar('policy_loss', np.mean(policy_loss_buffer), self.train_count)
             self.writer.add_scalar('value_loss', np.mean(value_loss_buffer), self.train_count)
 
+    def evaluate(self, episode_num):
+        if self.eval_env is None:
+            return
+        self.policy_net.eval()
+        total_reward = 0
+        obs, _ = self.eval_env.reset(seed=self.seed)
+        while True:
+            with torch.no_grad():
+                action = self.policy_net.act(torch.FloatTensor(np.expand_dims(obs, 0)).to(self.device))
+            clipped_action = np.clip(action, self.action_low, self.action_high)
+            next_obs, reward, terminated, truncated, _ = self.eval_env.step(clipped_action)
+            done = terminated or truncated
+            total_reward += reward
+            obs = next_obs
+            if done:
+                break
+        if self.log:
+            self.writer.add_scalar('eval_reward', total_reward, episode_num)
+        print('episode: {}  evaluation reward: {:.2f}'.format(episode_num, total_reward))
+        self.policy_net.train()
+
     def run(self):
         for i in range(self.episode):
+            if self.eval_env is not None and i % self.eval_freq == 0:
+                self.evaluate(i + 1)
             obs,_ = self.env.reset(seed=self.seed + i)
             total_reward = 0
             if self.render:
@@ -279,13 +307,16 @@ class ppo_clip(object):
                     print('episode: {}  reward: {:.2f}  weight_reward: {:.2f}  train_step: {}'.format(i+1, total_reward, self.weight_reward, self.train_count))
                     break
 
-
 if __name__ == '__main__':
-    env = gym.make('Hopper-v5')
-    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     seed = 42
+    env = gym.make('Hopper-v5')
+    _,_ = env.reset(seed=seed)
+    eval_env = gym.make('Hopper-v5')
+    _,_ = eval_env.reset(seed=seed)
+    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     test = ppo_clip(
         env=env,
+        eval_env=eval_env,
         episode=10000,
         learning_rate=1e-3,
         gamma=0.99,
@@ -299,6 +330,8 @@ if __name__ == '__main__':
         ext_coef=2.,
         rnd_update_prop=0.25,
         seed=seed,
-        device=device
+        device=device,
+        eval_freq=10,
+        tb_path='runs_rnd/ppo_clip_rnd/gym/hopper_hop/proprio/s0'
     )
     test.run()

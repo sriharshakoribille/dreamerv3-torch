@@ -478,7 +478,7 @@ if __name__ == '__main__':
         rnd_update_prop=0.25,
         seed=seed,
         device=device,
-        eval_freq=1,
-        tb_path='runs_rnd/ppo_clip_rnd/gym/hopper_hop/vision/s0_test'
+        eval_freq=10,
+        tb_path='runs_rnd/ppo_clip_rnd/gym/hopper_hop/vision/s0'
     )
     test.run()

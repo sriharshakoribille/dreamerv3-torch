@@ -248,7 +248,8 @@ class ppo_clip(object):
             while True:
                 action = self.policy_net.act(torch.FloatTensor(np.expand_dims(obs, 0)).to(self.device))
                 clipped_action = np.clip(action, self.action_low, self.action_high)
-                next_obs, ext_reward, done, _, _ = self.env.step(clipped_action)
+                next_obs, ext_reward, term, trunc, _ = self.env.step(clipped_action)
+                done = term or trunc
                 int_reward = self.rnd.calc_int_reward(torch.FloatTensor(np.expand_dims(obs, 0)).to(self.device))[0]
                 if self.render:
                     self.env.render()
@@ -292,7 +293,7 @@ if __name__ == '__main__':
         epsilon=0.2,
         capacity=2048,
         render=False,
-        log=False,
+        log=True,
         update_iterations=10,
         int_coef=1.,
         ext_coef=2.,

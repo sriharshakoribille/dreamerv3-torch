@@ -30,7 +30,24 @@ class GrayScaleObservation(gym.ObservationWrapper):
         observation = transform(observation)
         return observation
 
+class ActionRepeat(gym.Wrapper):
 
+  def __init__(self, env, repeat):
+    super().__init__(env)
+    self._repeat = repeat
+
+  def step(self, action):
+    if action['reset']:
+      return self.env.step(action)
+    reward = 0.0
+    for _ in range(self._repeat):
+      obs = self.env.step(action)
+      reward += obs['reward']
+      if obs['is_last'] or obs['is_terminal']:
+        break
+    obs['reward'] = np.float32(reward)
+    return obs
+  
 class ResizeObservation(gym.ObservationWrapper):
     def __init__(self, env, shape):
         super().__init__(env)
@@ -246,9 +263,14 @@ class rnd(nn.Module):
         return int_reward.detach().cpu().numpy()
 
 class ppo_clip(object):
-    def __init__(self, env, episode, learning_rate, gamma, lam, epsilon, capacity, render, log, update_iterations, int_coef, ext_coef, rnd_update_prop, seed, device):
+    def __init__(self, env, episode, learning_rate, gamma, lam, epsilon, 
+                 capacity, render, log, update_iterations, int_coef, ext_coef, 
+                 rnd_update_prop, seed, device, tb_path='runs_rnd/idk', 
+                 eval_env=None, eval_freq=100):
         super(ppo_clip, self).__init__()
         self.env = env
+        self.eval_env = eval_env
+        self.eval_freq = eval_freq
         self.episode = episode
         self.learning_rate = learning_rate
         self.gamma = gamma
@@ -285,7 +307,7 @@ class ppo_clip(object):
         self.count = 0
         self.train_count = 0
         self.weight_reward = None
-        self.writer = SummaryWriter('runs_rnd/ppo_clip_rnd_img')
+        self.writer = SummaryWriter(tb_path)
 
     def train(self):
         obs, next_obs, act, int_rew, don, _, _, int_adv = self.int_buffer.get()
@@ -350,8 +372,37 @@ class ppo_clip(object):
             self.writer.add_scalar('policy_loss', np.mean(policy_loss_buffer), self.train_count)
             self.writer.add_scalar('value_loss', np.mean(value_loss_buffer), self.train_count)
 
+    def evaluate(self, episode_num):
+        self.policy_net.eval()
+        total_reward = 0
+        obs, _ = self.eval_env.reset(seed=self.seed)
+        while True:
+            with torch.no_grad():
+                action = self.policy_net.act(torch.FloatTensor(np.expand_dims(obs, 0)).to(self.device))
+            clipped_action = np.clip(action, self.action_low, self.action_high)
+            next_obs, reward, terminated, truncated, _ = self.eval_env.step(clipped_action)
+            done = terminated or truncated
+            total_reward += reward
+            obs = next_obs
+            if done:
+                break
+        
+        # frames = self.eval_env.render()
+        if self.log:
+            self.writer.add_scalar('eval_reward', total_reward, episode_num)
+            # if frames:
+            #     frames = np.stack(frames) # T, H, W, C
+            #     frames = np.transpose(frames, (0, 3, 1, 2)) # T, C, H, W
+            #     frames = np.expand_dims(frames, 0) # N, T, C, H, W
+            #     self.writer.add_video('eval_video', frames, global_step=episode_num, fps=50)
+
+        print('episode: {}  evaluation reward: {:.2f}'.format(episode_num, total_reward))
+        self.policy_net.train()
+
     def run(self):
         for i in range(self.episode):
+            if self.eval_env is not None and i % self.eval_freq == 0:
+                self.evaluate(i + 1)
             obs,_ = self.env.reset(seed=self.seed + i)
             total_reward = 0
             if self.render:
@@ -390,18 +441,29 @@ class ppo_clip(object):
                     print('episode: {}  reward: {:.2f}  weight_reward: {:.2f}  train_step: {}'.format(i+1, total_reward, self.weight_reward, self.train_count))
                     break
 
+# def make_env(env_name, seed=None):
 
 if __name__ == '__main__':
+    seed = 0 
     env = gym.make('Hopper-v5', render_mode='rgb_array')
+    _,_ = env.reset(seed=0)
     env = gym.wrappers.AddRenderObservation(env,render_only=True)
     env = GrayScaleObservation(env)
-    env = ResizeObservation(env, 84)
+    env = ResizeObservation(env, 64)
     env = FrameStack(env, 4)
+
+    eval_env = gym.make('Hopper-v5', render_mode='rgb_array')
+    _,_ = eval_env.reset(seed=0)
+    eval_env = gym.wrappers.AddRenderObservation(eval_env, render_only=True)
+    eval_env = gym.wrappers.RenderCollection(eval_env)
+    eval_env = GrayScaleObservation(eval_env)
+    eval_env = ResizeObservation(eval_env, 64)
+    eval_env = FrameStack(eval_env, 4)
     
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-    seed = 42
     test = ppo_clip(
         env=env,
+        eval_env=eval_env,
         episode=10000,
         learning_rate=1e-4,
         gamma=0.99,
@@ -415,6 +477,8 @@ if __name__ == '__main__':
         ext_coef=2.,
         rnd_update_prop=0.25,
         seed=seed,
-        device=device
+        device=device,
+        eval_freq=1,
+        tb_path='runs_rnd/ppo_clip_rnd/gym/hopper_hop/vision/s0_test'
     )
     test.run()

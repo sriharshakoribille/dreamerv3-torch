@@ -308,7 +308,7 @@ class ppo_clip(object):
                     break
 
 if __name__ == '__main__':
-    seed = 42
+    seed = 0
     env = gym.make('Hopper-v5')
     _,_ = env.reset(seed=seed)
     eval_env = gym.make('Hopper-v5')
@@ -331,7 +331,7 @@ if __name__ == '__main__':
         rnd_update_prop=0.25,
         seed=seed,
         device=device,
-        eval_freq=10,
+        eval_freq=25,
         tb_path='runs_rnd/ppo_clip_rnd/gym/hopper_hop/proprio/s0'
     )
     test.run()

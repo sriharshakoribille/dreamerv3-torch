@@ -11,7 +11,6 @@ from datetime import datetime
 from gymnasium.spaces import Box
 import torchvision.transforms as T
 
-
 class GrayScaleObservation(gym.ObservationWrapper):
     def __init__(self, env):
         super().__init__(env)
@@ -444,15 +443,16 @@ class ppo_clip(object):
 # def make_env(env_name, seed=None):
 
 if __name__ == '__main__':
-    seed = 0 
-    env = gym.make('Hopper-v5', render_mode='rgb_array')
+    seed = 0
+    env_name = 'HalfCheetah-v5'
+    env = gym.make(env_name, render_mode='rgb_array')
     _,_ = env.reset(seed=0)
     env = gym.wrappers.AddRenderObservation(env,render_only=True)
     env = GrayScaleObservation(env)
     env = ResizeObservation(env, 64)
     env = FrameStack(env, 4)
 
-    eval_env = gym.make('Hopper-v5', render_mode='rgb_array')
+    eval_env = gym.make(env_name, render_mode='rgb_array')
     _,_ = eval_env.reset(seed=0)
     eval_env = gym.wrappers.AddRenderObservation(eval_env, render_only=True)
     eval_env = gym.wrappers.RenderCollection(eval_env)
@@ -478,7 +478,7 @@ if __name__ == '__main__':
         rnd_update_prop=0.25,
         seed=seed,
         device=device,
-        eval_freq=10,
-        tb_path='runs_rnd/ppo_clip_rnd/gym/hopper_hop/vision/s0'
+        eval_freq=25,
+        tb_path='runs_rnd/ppo_clip_rnd/gym/cheetah_run/vision/s0'
     )
     test.run()

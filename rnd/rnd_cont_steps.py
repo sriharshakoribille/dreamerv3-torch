@@ -135,7 +135,7 @@ class rnd(nn.Module):
         return int_reward.detach().cpu().numpy()
 
 class ppo_clip(object):
-    def __init__(self, env, episode, learning_rate, gamma, lam, epsilon, 
+    def __init__(self, env, max_steps, learning_rate, gamma, lam, epsilon, 
                  capacity, render, log, update_iterations, int_coef, ext_coef, 
                  rnd_update_prop, seed, device, tb_path='runs_rnd/ppo_clip_rnd', 
                  eval_env=None, eval_freq=100):
@@ -143,7 +143,7 @@ class ppo_clip(object):
         self.env = env
         self.eval_env = eval_env
         self.eval_freq = eval_freq
-        self.episode = episode
+        # self.episode = episode
         self.learning_rate = learning_rate
         self.gamma = gamma
         self.lam = lam
@@ -157,6 +157,7 @@ class ppo_clip(object):
         self.rnd_update_prop = rnd_update_prop
         self.seed = seed
         self.device = device
+        self.max_steps = max_steps
 
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
@@ -249,7 +250,7 @@ class ppo_clip(object):
             return
         self.policy_net.eval()
         total_reward = 0
-        obs, _ = self.eval_env.reset(seed=self.seed)
+        obs, _ = self.eval_env.reset()
         while True:
             with torch.no_grad():
                 action = self.policy_net.act(torch.FloatTensor(np.expand_dims(obs, 0)).to(self.device))
@@ -266,11 +267,14 @@ class ppo_clip(object):
         self.policy_net.train()
 
     def run(self):
-        for i in range(self.episode):
-            if self.eval_env is not None and i % self.eval_freq == 0:
-                self.evaluate(i + 1)
-            obs,_ = self.env.reset(seed=self.seed + i)
+        total_steps = 0
+        episode = 0
+        while total_steps < self.max_steps:
+            if self.eval_env is not None and total_steps % self.eval_freq == 0:
+                self.evaluate(total_steps)
+            obs, _ = self.env.reset(seed=self.seed + episode)
             total_reward = 0
+            steps_in_episode = 0
             if self.render:
                 self.env.render()
             while True:
@@ -289,6 +293,8 @@ class ppo_clip(object):
                 self.count += 1
                 total_reward += ext_reward
                 obs = next_obs
+                total_steps += 1
+                steps_in_episode += 1
                 if self.count % self.capacity == 0:
                     self.int_buffer.process()
                     self.ext_buffer.process()
@@ -296,28 +302,33 @@ class ppo_clip(object):
                     self.train()
                     self.int_buffer.clear()
                     self.ext_buffer.clear()
-                if done:
+                if done or total_steps >= self.max_steps:
                     if not self.weight_reward:
                         self.weight_reward = total_reward
                     else:
                         self.weight_reward = self.weight_reward * 0.99 + total_reward * 0.01
                     if self.log:
-                        self.writer.add_scalar('weight_reward', self.weight_reward, i+1)
-                        self.writer.add_scalar('reward', total_reward, i+1)
-                    print('episode: {}  reward: {:.2f}  weight_reward: {:.2f}  train_step: {}'.format(i+1, total_reward, self.weight_reward, self.train_count))
+                        self.writer.add_scalar('weight_reward', self.weight_reward, total_steps)
+                        self.writer.add_scalar('reward', total_reward, total_steps)
+                    print('steps: {}  episode: {}  reward: {:.2f}  weight_reward: {:.2f}  train_step: {}'.format(
+                        total_steps, episode + 1, total_reward, self.weight_reward, self.train_count))
                     break
+            episode += 1
 
 if __name__ == '__main__':
     seed = 0
-    env = gym.make('Hopper-v5')
+    # env_name = 'HalfCheetah-v5'
+    env_name='Hopper-v5'
+    env = gym.make(env_name)
     _,_ = env.reset(seed=seed)
-    eval_env = gym.make('Hopper-v5')
+    eval_env = gym.make(env_name)
     _,_ = eval_env.reset(seed=seed)
-    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda:1' if torch.cuda.is_available() else 'cpu'
+    max_steps = 1_000_000  # Set your desired total steps here
     test = ppo_clip(
         env=env,
         eval_env=eval_env,
-        episode=10000,
+        max_steps=max_steps,
         learning_rate=1e-3,
         gamma=0.99,
         lam=0.97,
@@ -331,7 +342,7 @@ if __name__ == '__main__':
         rnd_update_prop=0.25,
         seed=seed,
         device=device,
-        eval_freq=25,
-        tb_path='runs_rnd/ppo_clip_rnd/gym/hopper_hop/proprio/s0'
+        eval_freq=25_000,  # Evaluate every 25k steps, for example
+        tb_path='runs_rnd/debug'
     )
     test.run()

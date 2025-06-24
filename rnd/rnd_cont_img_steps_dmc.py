@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,6 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 from gymnasium.spaces import Box
 import torchvision.transforms as T
+from envs.dmc import DeepMindControl
 
 class GrayScaleObservation(gym.ObservationWrapper):
     def __init__(self, env):
@@ -93,6 +97,16 @@ class FrameStack(gym.ObservationWrapper):
     def _get_observation(self):
         assert len(self.frames) == self.n_frames
         return np.stack(list(self.frames), axis=0)
+
+
+class SelectObs(gym.ObservationWrapper):
+    def __init__(self, env, key):
+        super().__init__(env)
+        self._key = key
+        self.observation_space = env.observation_space.spaces[key]
+
+    def observation(self, obs):
+        return obs[self._key]
 
 
 class gae_trajectory_buffer(object):
@@ -446,29 +460,26 @@ import argparse
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--env_name', type=str, default='HalfCheetah-v5', help='Gym environment name')
+    parser.add_argument('--env_name', type=str, default='cheetah_run', help='DMC environment name')
     parser.add_argument('--seed', type=int, default=0, help='Random seed')
     args = parser.parse_args()
 
     env_name = args.env_name
     seed = args.seed
     # env_name = 'Hopper-v5'
-    env = gym.make(env_name, render_mode='rgb_array')
-    _,_ = env.reset(seed=0)
-    env = gym.wrappers.AddRenderObservation(env,render_only=True)
+    env = DeepMindControl(env_name, seed=seed)
+    env = SelectObs(env, 'image')
     env = GrayScaleObservation(env)
     env = ResizeObservation(env, 64)
     env = FrameStack(env, 4)
 
-    eval_env = gym.make(env_name, render_mode='rgb_array')
-    _,_ = eval_env.reset(seed=0)
-    eval_env = gym.wrappers.AddRenderObservation(eval_env, render_only=True)
-    eval_env = gym.wrappers.RenderCollection(eval_env)
+    eval_env = DeepMindControl(env_name, seed=seed)
+    eval_env = SelectObs(eval_env, 'image')
     eval_env = GrayScaleObservation(eval_env)
     eval_env = ResizeObservation(eval_env, 64)
     eval_env = FrameStack(eval_env, 4)
     
-    device = 'cuda:2' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     test = ppo_clip(
         env=env,
         eval_env=eval_env,
@@ -488,7 +499,7 @@ if __name__ == '__main__':
         device=device,
         eval_freq=15_000,  # <-- evaluate every 25k steps
         # tb_path='runs_rnd/ppo_clip_rnd/gym/cheetah_run/vision/s0'
-        tb_path=f'runs_rnd/ppo_clip_rnd/gym/{env_name}/vision/s{seed}',
+        tb_path=f'runs_rnd/ppo_clip_rnd/dmc/{env_name}/vision/s{seed}',
         # tb_path='runs_rnd/debug'
     )
     test.run()

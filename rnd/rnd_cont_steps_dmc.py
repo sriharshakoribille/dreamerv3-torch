@@ -8,6 +8,10 @@ from collections import deque
 from torch.distributions import Normal
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from envs.dmc import DeepMindControl
 
 
 class gae_trajectory_buffer(object):
@@ -322,22 +326,29 @@ class ppo_clip(object):
 
 class SelectPositions(gym.ObservationWrapper):
     """An observation wrapper that selects the first `pos_dims` from the observation."""
-    def __init__(self, env, pos_dims):
+    def __init__(self, env, obs_keys):
         super().__init__(env)
-        self.pos_dims = pos_dims
+        self.obs_keys = obs_keys
         
-        # Update the observation space to match the new shape
+       # Extract the shapes of the selected keys
         original_space = self.observation_space
+        low = []
+        high = []
+        for key in self.obs_keys:
+            low.append(original_space[key].low.flatten())
+            high.append(original_space[key].high.flatten())
+
+        # Concatenate the low and high bounds to define the new observation space
         self.observation_space = gym.spaces.Box(
-            low=original_space.low[:self.pos_dims],
-            high=original_space.high[:self.pos_dims],
-            shape=(self.pos_dims,),
-            dtype=original_space.dtype
+            low=np.concatenate(low, axis=0),
+            high=np.concatenate(high, axis=0),
+            dtype=np.float32
         )
 
     def observation(self, obs):
         # Return only the position part of the observation
-        return obs[:self.pos_dims]
+        new_obs = np.concatenate([obs[key] for key in self.obs_keys], axis=0)
+        return new_obs
 
 class FrameStack(gym.ObservationWrapper):
     def __init__(self, env, n_frames):
@@ -371,7 +382,7 @@ class FrameStack(gym.ObservationWrapper):
 import argparse
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--env_name', type=str, default='HalfCheetah-v5', help='DMC environment name')
+    parser.add_argument('--env_name', type=str, default='cheetah_run', help='DMC environment name')
     parser.add_argument('--seed', type=int, default=0, help='Random seed')
     args = parser.parse_args()
 
@@ -381,24 +392,23 @@ if __name__ == '__main__':
     # env_name = 'HalfCheetah-v5'
     
     # Define the number of position dimensions for each environment
-    if env_name == 'Hopper-v5':
-        pos_dims = 5
-    elif env_name == 'HalfCheetah-v5':
-        pos_dims = 8
+    if env_name == 'hopper_hop':
+        obs_keys=['position','touch']
+    elif env_name == 'cheetah_run':
+        obs_keys=['position']
     else:
         # Defaulting or raising an error is good practice
         raise ValueError(f"Position dimensions not specified for {env_name}")
 
-    env = gym.make(env_name)
-    env = SelectPositions(env, pos_dims)
+    env = DeepMindControl(env_name,seed=seed,image=False)
+    env = SelectPositions(env, obs_keys)
     env = FrameStack(env, n_frames=4)  # Stack 4 frames
-    _,_ = env.reset(seed=seed)
 
 
-    eval_env = gym.make(env_name)
-    eval_env = SelectPositions(eval_env, pos_dims)
+    eval_env = DeepMindControl(env_name,seed=seed,image=False)
+    eval_env = SelectPositions(eval_env, obs_keys)
     eval_env = FrameStack(eval_env, n_frames=4)  # Stack 4 frames
-    _,_ = eval_env.reset(seed=seed)
+
     device = 'cuda:7' if torch.cuda.is_available() else 'cpu'
     max_steps = 500_000  # Set your desired total steps here
     test = ppo_clip(
@@ -419,7 +429,7 @@ if __name__ == '__main__':
         seed=seed,
         device=device,
         eval_freq=10_000,  # Evaluate every 25k steps, for example
-        tb_path=f'runs_rnd/ppo_clip_rnd/gym/{env_name}/partial/s{seed}',
+        tb_path=f'runs_rnd/ppo_clip_rnd/dmc/{env_name}/partial/s{seed}',
         # tb_path='runs_rnd/debug'
     )
     test.run()

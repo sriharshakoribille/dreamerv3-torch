@@ -479,7 +479,7 @@ if __name__ == '__main__':
     eval_env = ResizeObservation(eval_env, 64)
     eval_env = FrameStack(eval_env, 4)
     
-    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda:7' if torch.cuda.is_available() else 'cpu'
     test = ppo_clip(
         env=env,
         eval_env=eval_env,

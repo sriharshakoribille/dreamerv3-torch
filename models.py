@@ -396,7 +396,7 @@ class ImagBehavior(nn.Module):
                         z_next = stoch[1:],
                     )
                 else:
-                    cls_reward = torch.zeros_like(reward[:, :-1])
+                    cls_reward = torch.zeros_like(reward[1:])
                 # state_ent = self._world_model.dynamics.get_dist(imag_state).entropy()
                 # this target is not scaled by ema or sym_log.
                 target, weights, base = self._compute_target(
